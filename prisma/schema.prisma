@@ -1,0 +1,38 @@
+// HiTrack API — свои таблицы (префикс ht_) в общей базе `hitrac` рядом с tc_* Traccar-а.
+// Правило: tc_* таблицы этой схемой НЕ описываем и не мигрируем — они принадлежат Traccar.
+
+generator client {
+  provider      = "prisma-client-js"
+  // native — для локальной разработки, debian-openssl-3.0.x — рантайм в node:22-slim
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HtRole {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  // строки-права, например "users:manage", "devices:read"; "*" — все права
+  permissions String[] @default([])
+  users       HtUser[]
+
+  @@map("ht_roles")
+}
+
+model HtUser {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  disabled     Boolean  @default(false)
+  roleId       Int?     @map("role_id")
+  role         HtRole?  @relation(fields: [roleId], references: [id])
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("ht_users")
+}

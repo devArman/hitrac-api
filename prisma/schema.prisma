@@ -34,6 +34,8 @@ model HtUser {
   role         HtRole?        @relation(fields: [roleId], references: [id])
   devices      HtUserDevice[]
   groups       HtGroupUser[]
+  announcements     HtAnnouncementUser[]
+  announcementReads HtAnnouncementRead[]
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
@@ -56,9 +58,10 @@ model HtGroup {
   id          Int             @id @default(autoincrement())
   name        String          @unique
   description String?
-  devices     HtGroupDevice[]
-  users       HtGroupUser[]
-  createdAt   DateTime        @default(now()) @map("created_at")
+  devices       HtGroupDevice[]
+  users         HtGroupUser[]
+  announcements HtAnnouncementGroup[]
+  createdAt     DateTime        @default(now()) @map("created_at")
 
   @@map("ht_groups")
 }
@@ -71,6 +74,55 @@ model HtGroupDevice {
 
   @@unique([groupId, deviceId])
   @@map("ht_group_devices")
+}
+
+// объявление: всем (toAll), группам и/или конкретным пользователям; reads — кто прочитал
+model HtAnnouncement {
+  id        Int                     @id @default(autoincrement())
+  subject   String
+  body      String
+  toAll     Boolean                 @default(false) @map("to_all")
+  createdBy Int?                    @map("created_by")
+  createdAt DateTime                @default(now()) @map("created_at")
+  groups    HtAnnouncementGroup[]
+  users     HtAnnouncementUser[]
+  reads     HtAnnouncementRead[]
+
+  @@map("ht_announcements")
+}
+
+model HtAnnouncementGroup {
+  id             Int            @id @default(autoincrement())
+  announcementId Int            @map("announcement_id")
+  groupId        Int            @map("group_id")
+  announcement   HtAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  group          HtGroup        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, groupId])
+  @@map("ht_announcement_groups")
+}
+
+model HtAnnouncementUser {
+  id             Int            @id @default(autoincrement())
+  announcementId Int            @map("announcement_id")
+  userId         Int            @map("user_id")
+  announcement   HtAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           HtUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@map("ht_announcement_users")
+}
+
+model HtAnnouncementRead {
+  id             Int            @id @default(autoincrement())
+  announcementId Int            @map("announcement_id")
+  userId         Int            @map("user_id")
+  readAt         DateTime       @default(now()) @map("read_at")
+  announcement   HtAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           HtUser         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@map("ht_announcement_reads")
 }
 
 model HtGroupUser {

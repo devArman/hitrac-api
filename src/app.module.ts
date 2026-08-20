@@ -8,6 +8,7 @@ import { UsersModule } from './users/users.module';
 import { RolesModule } from './roles/roles.module';
 import { DevicesModule } from './devices/devices.module';
 import { GroupsModule } from './groups/groups.module';
+import { AnnouncementsModule } from './announcements/announcements.module';
 import { HealthController } from './health.controller';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermissionsGuard } from './auth/permissions.guard';
@@ -23,6 +24,7 @@ import { SeedService } from './seed.service';
     RolesModule,
     DevicesModule,
     GroupsModule,
+    AnnouncementsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -161,6 +161,16 @@ model HtAlert {
   @@map("ht_alerts")
 }
 
+// владелец геозоны: null — общая для всех клиентов
+model HtGeofenceMeta {
+  id          Int      @id @default(autoincrement())
+  geofenceId  Int      @unique @map("geofence_id")
+  ownerUserId Int?     @map("owner_user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("ht_geofence_meta")
+}
+
 model HtGroupUser {
   id      Int     @id @default(autoincrement())
   groupId Int     @map("group_id")

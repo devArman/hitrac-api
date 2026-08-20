@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
@@ -11,6 +12,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import { Prisma } from '@prisma/client';
 import { DevicesService } from './devices.service';
 import { TraccarService } from '../traccar/traccar.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -82,9 +84,71 @@ export class DevicesController {
     });
   }
 
+  // геозоны: общие (owner null) + личные текущего пользователя
   @Get('geofences')
-  geofences() {
-    return this.traccar.request('/geofences', { params: { all: 'true' } });
+  async geofences(@CurrentUser() user: AuthedUser) {
+    const [list, meta] = await Promise.all([
+      this.traccar.request('/geofences', { params: { all: 'true' } }),
+      this.prisma.htGeofenceMeta.findMany(),
+    ]);
+    const metaById = new Map(meta.map((m) => [m.geofenceId, m]));
+    const isAdmin = user.role?.permissions.includes('*');
+    return (list as any[])
+      .filter((g) => {
+        const m = metaById.get(g.id);
+        const owner = m?.ownerUserId ?? null;
+        return isAdmin || owner === null || owner === user.id;
+      })
+      .map((g) => {
+        const owner = metaById.get(g.id)?.ownerUserId ?? null;
+        return { ...g, shared: owner === null, own: owner === user.id };
+      });
+  }
+
+  // создать геозону: у клиента — личная, у админа — общая; привязываем к устройствам,
+  // чтобы движок Traccar генерил события въезда/выезда
+  @Post('geofences')
+  async createGeofence(
+    @CurrentUser() user: AuthedUser,
+    @Body() dto: { name: string; area: string },
+  ) {
+    if (!dto.name?.trim() || !/^(POLYGON|CIRCLE|LINESTRING)/i.test(dto.area ?? '')) {
+      throw new BadRequestException('Нужны name и area (POLYGON/CIRCLE)');
+    }
+    const geofence = await this.traccar.request('/geofences', {
+      method: 'POST',
+      body: { name: dto.name.trim(), area: dto.area },
+    });
+    const isAdmin = user.role?.permissions.includes('*');
+    await this.prisma.htGeofenceMeta.create({
+      data: { geofenceId: geofence.id, ownerUserId: isAdmin ? null : user.id },
+    });
+    // привязка к устройствам (общая — ко всем, личная — к устройствам клиента)
+    const allowed = await this.devicesService.allowedIds(user);
+    const deviceIds = allowed === null
+      ? (await this.prisma.$queryRaw<any[]>(Prisma.sql`SELECT id FROM tc_devices`)).map((d) => d.id)
+      : allowed;
+    for (const deviceId of deviceIds) {
+      // по одной паре за запрос — так требует Traccar
+      // eslint-disable-next-line no-await-in-loop
+      await this.traccar.request('/permissions', {
+        method: 'POST',
+        body: { deviceId, geofenceId: geofence.id },
+      }).catch(() => undefined);
+    }
+    return { ...geofence, shared: isAdmin, own: !isAdmin };
+  }
+
+  @Delete('geofences/:id')
+  async deleteGeofence(@CurrentUser() user: AuthedUser, @Param('id', ParseIntPipe) id: number) {
+    const meta = await this.prisma.htGeofenceMeta.findUnique({ where: { geofenceId: id } });
+    const isAdmin = user.role?.permissions.includes('*');
+    if (!isAdmin && meta?.ownerUserId !== user.id) {
+      throw new BadRequestException('Можно удалять только свои геозоны');
+    }
+    await this.traccar.request(`/geofences/${id}`, { method: 'DELETE' });
+    await this.prisma.htGeofenceMeta.deleteMany({ where: { geofenceId: id } });
+    return { deleted: true };
   }
 
   @Get('commands/types')

@@ -115,6 +115,9 @@ export class DevicesController {
     if (!dto.name?.trim() || !/^(POLYGON|CIRCLE|LINESTRING)/i.test(dto.area ?? '')) {
       throw new BadRequestException('Нужны name и area (POLYGON/CIRCLE)');
     }
+    if (dto.area.length > 4000) {
+      throw new BadRequestException('Слишком сложная геозона — уменьшите число точек (лимит ~200)');
+    }
     const geofence = await this.traccar.request('/geofences', {
       method: 'POST',
       body: { name: dto.name.trim(), area: dto.area },

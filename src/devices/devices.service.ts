@@ -38,7 +38,7 @@ export class DevicesService {
     if (allowed !== null && allowed.length === 0) return [];
     const where = allowed === null ? Prisma.empty : Prisma.sql`WHERE d.id IN (${Prisma.join(allowed)})`;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT d.id, d.name, d.uniqueid, d.status, d.lastupdate, d.model, d.contact, d.attributes
+      SELECT d.id, d.name, d.uniqueid, d.status, d.lastupdate, d.model, d.contact, d.phone, d.attributes
       FROM tc_devices d ${where} ORDER BY d.name`);
     return rows.map((r) => ({
       id: r.id,
@@ -49,6 +49,7 @@ export class DevicesService {
       lastUpdate: r.lastupdate,
       model: r.model,
       contact: r.contact,
+      phone: r.phone,
       attributes: parseJson(r.attributes),
     }));
   }

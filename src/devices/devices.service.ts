@@ -58,13 +58,14 @@ export class DevicesService {
     if (allowed !== null && allowed.length === 0) return [];
     const where = allowed === null ? Prisma.empty : Prisma.sql`AND d.id IN (${Prisma.join(allowed)})`;
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
-      SELECT p.id, p.deviceid, p.latitude, p.longitude, p.speed, p.course, p.altitude,
+      SELECT p.id, p.deviceid, p.protocol, p.latitude, p.longitude, p.speed, p.course, p.altitude,
              p.fixtime, p.devicetime, p.servertime, p.address, p.attributes
       FROM tc_devices d JOIN tc_positions p ON p.id = d.positionid
       WHERE d.positionid IS NOT NULL ${where}`);
     return rows.map((r) => ({
       id: r.id,
       deviceId: r.deviceid,
+      protocol: r.protocol,
       latitude: r.latitude,
       longitude: r.longitude,
       speed: r.speed,

@@ -3,7 +3,10 @@ import {
   Body,
   Controller,
   Get,
+  NotFoundException,
   Param,
+  ParseIntPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -114,6 +117,26 @@ export class DevicesController {
       await this.prisma.htUserDevice.create({ data: { userId: dto.userId, deviceId: device.id } });
     }
     return device;
+  }
+
+  // правка трекера (название, модель): Traccar PUT требует полный объект
+  @Patch('admin/devices/:id')
+  @Require('devices:manage')
+  async updateDevice(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { name?: string; model?: string },
+  ) {
+    const found = await this.traccar.request('/devices', { params: { id: String(id) } });
+    const device = Array.isArray(found) ? found[0] : null;
+    if (!device) throw new NotFoundException('Устройство не найдено');
+    return this.traccar.request(`/devices/${id}`, {
+      method: 'PUT',
+      body: {
+        ...device,
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.model !== undefined && { model: dto.model || null }),
+      },
+    });
   }
 
   @Get('admin/statistics')

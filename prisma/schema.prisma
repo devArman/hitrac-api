@@ -24,15 +24,28 @@ model HtRole {
 }
 
 model HtUser {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
+  id           Int            @id @default(autoincrement())
+  email        String         @unique
   name         String
-  passwordHash String   @map("password_hash")
-  disabled     Boolean  @default(false)
-  roleId       Int?     @map("role_id")
-  role         HtRole?  @relation(fields: [roleId], references: [id])
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  phone        String?
+  passwordHash String         @map("password_hash")
+  disabled     Boolean        @default(false)
+  roleId       Int?           @map("role_id")
+  role         HtRole?        @relation(fields: [roleId], references: [id])
+  devices      HtUserDevice[]
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
 
   @@map("ht_users")
+}
+
+// какие Traccar-устройства видит пользователь (наша карта прав вместо tc_user_device/групп)
+model HtUserDevice {
+  id       Int    @id @default(autoincrement())
+  userId   Int    @map("user_id")
+  deviceId Int    @map("device_id")
+  user     HtUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@map("ht_user_devices")
 }

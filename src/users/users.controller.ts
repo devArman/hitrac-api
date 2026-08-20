@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
-import { IsBoolean, IsEmail, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
 import { Require } from '../auth/decorators';
 import { UsersService } from './users.service';
 
@@ -16,12 +16,25 @@ class CreateUserDto {
   password: string;
 
   @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
   @IsInt()
   roleId?: number;
 
   @IsOptional()
+  @IsString()
+  roleName?: string;
+
+  @IsOptional()
   @IsBoolean()
   disabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  deviceIds?: number[];
 }
 
 class UpdateUserDto {
@@ -36,6 +49,10 @@ class UpdateUserDto {
 
   @IsOptional()
   @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
   @MinLength(6)
   password?: string;
 
@@ -44,8 +61,17 @@ class UpdateUserDto {
   roleId?: number | null;
 
   @IsOptional()
+  @IsString()
+  roleName?: string;
+
+  @IsOptional()
   @IsBoolean()
   disabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  deviceIds?: number[];
 }
 
 @Controller('users')

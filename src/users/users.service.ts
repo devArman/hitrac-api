@@ -6,9 +6,11 @@ const PUBLIC_SELECT = {
   id: true,
   email: true,
   name: true,
+  phone: true,
   disabled: true,
   roleId: true,
   role: true,
+  devices: { select: { deviceId: true } },
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -16,17 +18,32 @@ const PUBLIC_SELECT = {
 export interface UserInput {
   email?: string;
   name?: string;
+  phone?: string;
   password?: string;
   roleId?: number | null;
+  roleName?: string;
   disabled?: boolean;
+  deviceIds?: number[];
 }
+
+const shape = (user: any) => ({ ...user, deviceIds: user.devices.map((d: any) => d.deviceId), devices: undefined });
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list() {
-    return this.prisma.htUser.findMany({ select: PUBLIC_SELECT, orderBy: { id: 'asc' } });
+  async list() {
+    const users = await this.prisma.htUser.findMany({ select: PUBLIC_SELECT, orderBy: { id: 'asc' } });
+    return users.map(shape);
+  }
+
+  private async resolveRoleId(input: UserInput): Promise<number | null | undefined> {
+    if (input.roleName) {
+      const role = await this.prisma.htRole.findUnique({ where: { name: input.roleName } });
+      if (!role) throw new NotFoundException(`Роль ${input.roleName} не найдена`);
+      return role.id;
+    }
+    return input.roleId;
   }
 
   async create(input: Required<Pick<UserInput, 'email' | 'name' | 'password'>> & UserInput) {
@@ -34,32 +51,45 @@ export class UsersService {
     if (await this.prisma.htUser.findUnique({ where: { email } })) {
       throw new ConflictException('Пользователь с таким email уже существует');
     }
-    return this.prisma.htUser.create({
+    const roleId = await this.resolveRoleId(input);
+    const user = await this.prisma.htUser.create({
       data: {
         email,
         name: input.name,
+        phone: input.phone ?? null,
         passwordHash: await bcrypt.hash(input.password, 10),
-        roleId: input.roleId ?? null,
+        roleId: roleId ?? null,
         disabled: input.disabled ?? false,
+        devices: { create: (input.deviceIds ?? []).map((deviceId) => ({ deviceId })) },
       },
       select: PUBLIC_SELECT,
     });
+    return shape(user);
   }
 
   async update(id: number, input: UserInput) {
     if (!(await this.prisma.htUser.findUnique({ where: { id } }))) {
       throw new NotFoundException('Пользователь не найден');
     }
-    return this.prisma.htUser.update({
+    const roleId = await this.resolveRoleId(input);
+    const user = await this.prisma.htUser.update({
       where: { id },
       data: {
         ...(input.email !== undefined && { email: input.email.toLowerCase().trim() }),
         ...(input.name !== undefined && { name: input.name }),
+        ...(input.phone !== undefined && { phone: input.phone }),
         ...(input.password !== undefined && { passwordHash: await bcrypt.hash(input.password, 10) }),
-        ...(input.roleId !== undefined && { roleId: input.roleId }),
+        ...(roleId !== undefined && { roleId }),
         ...(input.disabled !== undefined && { disabled: input.disabled }),
+        ...(input.deviceIds !== undefined && {
+          devices: {
+            deleteMany: {},
+            create: input.deviceIds.map((deviceId) => ({ deviceId })),
+          },
+        }),
       },
       select: PUBLIC_SELECT,
     });
+    return shape(user);
   }
 }

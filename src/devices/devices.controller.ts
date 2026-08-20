@@ -139,6 +139,34 @@ export class DevicesController {
     });
   }
 
+  @Get('admin/fuel-calibrations')
+  @Require('devices:manage')
+  fuelCalibrations() {
+    return this.prisma.htFuelCalibration.findMany();
+  }
+
+  // сохранить/обновить тарировку; пустой список точек — удалить
+  @Post('admin/fuel-calibrations/:deviceId')
+  @Require('devices:manage')
+  async saveFuelCalibration(
+    @Param('deviceId', ParseIntPipe) deviceId: number,
+    @Body() dto: { sensorKey?: string; points: Array<{ raw: number; liters: number }> },
+  ) {
+    const points = (dto.points ?? [])
+      .filter((p) => Number.isFinite(p.raw) && Number.isFinite(p.liters))
+      .sort((a, b) => a.raw - b.raw);
+    if (points.length < 2) {
+      await this.prisma.htFuelCalibration.deleteMany({ where: { deviceId } });
+      return { deleted: true };
+    }
+    const sensorKey = dto.sensorKey || 'io270';
+    return this.prisma.htFuelCalibration.upsert({
+      where: { deviceId },
+      update: { sensorKey, points },
+      create: { deviceId, sensorKey, points },
+    });
+  }
+
   @Get('admin/statistics')
   @Require('platform:manage')
   statistics(@Query('from') from: string, @Query('to') to: string) {

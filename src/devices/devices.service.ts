@@ -57,11 +57,15 @@ export class DevicesService {
     const allowed = await this.allowedIds(user);
     if (allowed !== null && allowed.length === 0) return [];
     const where = allowed === null ? Prisma.empty : Prisma.sql`AND d.id IN (${Prisma.join(allowed)})`;
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+    const [rows, calibrations] = await Promise.all([
+      this.prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT p.id, p.deviceid, p.protocol, p.latitude, p.longitude, p.speed, p.course, p.altitude,
              p.fixtime, p.devicetime, p.servertime, p.address, p.attributes
       FROM tc_devices d JOIN tc_positions p ON p.id = d.positionid
-      WHERE d.positionid IS NOT NULL ${where}`);
+      WHERE d.positionid IS NOT NULL ${where}`),
+      this.prisma.htFuelCalibration.findMany(),
+    ]);
+    const calByDevice = new Map(calibrations.map((c) => [c.deviceId, c]));
     return rows.map((r) => ({
       id: r.id,
       deviceId: r.deviceid,
@@ -75,9 +79,41 @@ export class DevicesService {
       deviceTime: r.devicetime,
       serverTime: r.servertime,
       address: r.address,
-      attributes: parseJson(r.attributes),
+      attributes: applyFuelCalibration(parseJson(r.attributes), calByDevice.get(r.deviceid)),
     }));
   }
+}
+
+/** points: [{raw, liters}] по возрастанию raw; кусочно-линейная интерполяция с ограничением по краям */
+function applyFuelCalibration(attributes: any, calibration?: { sensorKey: string; points: any }) {
+  const points = calibration?.points as Array<{ raw: number; liters: number }> | undefined;
+  if (!points || points.length < 2) return attributes;
+  const raw = attributes?.[calibration!.sensorKey];
+  if (typeof raw !== 'number') return attributes;
+
+  let liters: number;
+  if (raw <= points[0].raw) {
+    liters = points[0].liters;
+  } else if (raw >= points[points.length - 1].raw) {
+    liters = points[points.length - 1].liters;
+  } else {
+    liters = points[0].liters;
+    for (let i = 1; i < points.length; i++) {
+      if (raw <= points[i].raw) {
+        const a = points[i - 1];
+        const b = points[i];
+        const t = b.raw === a.raw ? 0 : (raw - a.raw) / (b.raw - a.raw);
+        liters = a.liters + t * (b.liters - a.liters);
+        break;
+      }
+    }
+  }
+  const maxLiters = Math.max(...points.map((p) => p.liters));
+  return {
+    ...attributes,
+    fuelLiters: Math.round(liters * 10) / 10,
+    ...(maxLiters > 0 ? { fuel: Math.round((liters / maxLiters) * 100) } : {}),
+  };
 }
 
 function parseJson(value: unknown) {

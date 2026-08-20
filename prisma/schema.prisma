@@ -125,6 +125,17 @@ model HtAnnouncementRead {
   @@map("ht_announcement_reads")
 }
 
+// тарировка ДУТ конкретного устройства: points = [{raw, liters}, …] по возрастанию raw
+model HtFuelCalibration {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int      @unique @map("device_id")
+  sensorKey String   @default("io270") @map("sensor_key")
+  points    Json
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("ht_fuel_calibrations")
+}
+
 model HtGroupUser {
   id      Int     @id @default(autoincrement())
   groupId Int     @map("group_id")

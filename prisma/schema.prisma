@@ -33,6 +33,7 @@ model HtUser {
   roleId       Int?           @map("role_id")
   role         HtRole?        @relation(fields: [roleId], references: [id])
   devices      HtUserDevice[]
+  groups       HtGroupUser[]
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
@@ -48,4 +49,37 @@ model HtUserDevice {
 
   @@unique([userId, deviceId])
   @@map("ht_user_devices")
+}
+
+// группа: пачка устройств + пачка пользователей; каждый пользователь группы видит все её устройства
+model HtGroup {
+  id          Int             @id @default(autoincrement())
+  name        String          @unique
+  description String?
+  devices     HtGroupDevice[]
+  users       HtGroupUser[]
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@map("ht_groups")
+}
+
+model HtGroupDevice {
+  id       Int     @id @default(autoincrement())
+  groupId  Int     @map("group_id")
+  deviceId Int     @map("device_id")
+  group    HtGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, deviceId])
+  @@map("ht_group_devices")
+}
+
+model HtGroupUser {
+  id      Int     @id @default(autoincrement())
+  groupId Int     @map("group_id")
+  userId  Int     @map("user_id")
+  group   HtGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user    HtUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("ht_group_users")
 }

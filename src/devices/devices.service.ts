@@ -14,8 +14,14 @@ export class DevicesService {
   /** null — пользователь видит все устройства (право "*") */
   async allowedIds(user: AuthedUser): Promise<number[] | null> {
     if (user.role?.permissions.includes('*')) return null;
-    const rows = await this.prisma.htUserDevice.findMany({ where: { userId: user.id } });
-    return rows.map((r) => r.deviceId);
+    // прямые привязки + устройства групп, где пользователь состоит
+    const [direct, viaGroups] = await Promise.all([
+      this.prisma.htUserDevice.findMany({ where: { userId: user.id } }),
+      this.prisma.htGroupDevice.findMany({
+        where: { group: { users: { some: { userId: user.id } } } },
+      }),
+    ]);
+    return [...new Set([...direct.map((r) => r.deviceId), ...viaGroups.map((r) => r.deviceId)])];
   }
 
   async assertAllowed(user: AuthedUser, deviceIds: number[]) {

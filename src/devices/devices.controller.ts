@@ -42,6 +42,11 @@ class CreateDeviceDto {
   @IsString()
   model?: string;
 
+  // тип объекта: bicycle | moped | car | truck | boat (иконка в интерфейсах)
+  @IsOptional()
+  @IsString()
+  category?: string;
+
   @IsOptional()
   @IsInt()
   userId?: number;
@@ -178,7 +183,7 @@ export class DevicesController {
   async createDevice(@Body() dto: CreateDeviceDto) {
     const device = await this.traccar.request('/devices', {
       method: 'POST',
-      body: { name: dto.name, uniqueId: dto.uniqueId, model: dto.model ?? null },
+      body: { name: dto.name, uniqueId: dto.uniqueId, model: dto.model ?? null, category: dto.category ?? null },
     });
     if (dto.userId) {
       await this.prisma.htUserDevice.create({ data: { userId: dto.userId, deviceId: device.id } });
@@ -191,7 +196,7 @@ export class DevicesController {
   @Require('devices:manage')
   async updateDevice(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { name?: string; model?: string },
+    @Body() dto: { name?: string; model?: string; category?: string },
   ) {
     const found = await this.traccar.request('/devices', { params: { id: String(id) } });
     const device = Array.isArray(found) ? found[0] : null;
@@ -202,6 +207,7 @@ export class DevicesController {
         ...device,
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.model !== undefined && { model: dto.model || null }),
+        ...(dto.category !== undefined && { category: dto.category || null }),
       },
     });
   }

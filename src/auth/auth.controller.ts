@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Patch, Post } from '@nestjs/common';
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsObject, IsOptional, IsString, MinLength } from 'class-validator';
 import * as bcrypt from 'bcryptjs';
 import { AuthService, publicUser } from './auth.service';
 import { AuthedUser, CurrentUser, Public } from './decorators';
@@ -28,6 +28,11 @@ class UpdateMeDto {
   @IsString()
   @MinLength(6)
   password?: string;
+
+  // клиентские настройки интерфейса (видимость/критичность уведомлений и т.п.)
+  @IsOptional()
+  @IsObject()
+  prefs?: Record<string, unknown>;
 }
 
 @Controller()
@@ -57,6 +62,7 @@ export class AuthController {
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.phone !== undefined && { phone: dto.phone }),
+        ...(dto.prefs !== undefined && { prefs: dto.prefs as any }),
         ...(dto.password !== undefined && { passwordHash: await bcrypt.hash(dto.password, 10) }),
       },
       include: { role: true },

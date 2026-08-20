@@ -28,6 +28,7 @@ model HtUser {
   email        String         @unique
   name         String
   phone        String?
+  prefs        Json?
   passwordHash String         @map("password_hash")
   disabled     Boolean        @default(false)
   roleId       Int?           @map("role_id")

@@ -101,7 +101,7 @@ export class DevicesController {
       })
       .map((g) => {
         const owner = metaById.get(g.id)?.ownerUserId ?? null;
-        return { ...g, shared: owner === null, own: owner === user.id };
+        return { ...g, shared: owner === null, own: owner === user.id, ownerUserId: owner };
       });
   }
 

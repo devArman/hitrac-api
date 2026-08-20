@@ -136,6 +136,31 @@ model HtFuelCalibration {
   @@map("ht_fuel_calibrations")
 }
 
+// лимиты, заданные клиентом на устройство; fuel_alerted — защита от спама уведомлениями
+model HtDeviceSetting {
+  id            Int      @id @default(autoincrement())
+  deviceId      Int      @unique @map("device_id")
+  speedLimitKmh Float?   @map("speed_limit_kmh")
+  minFuelLiters Float?   @map("min_fuel_liters")
+  fuelAlerted   Boolean  @default(false) @map("fuel_alerted")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("ht_device_settings")
+}
+
+// наши автоматические уведомления (низкий остаток топлива и т.п.)
+model HtAlert {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int      @map("device_id")
+  type      String
+  message   String
+  value     Float?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([deviceId, createdAt])
+  @@map("ht_alerts")
+}
+
 model HtGroupUser {
   id      Int     @id @default(autoincrement())
   groupId Int     @map("group_id")

@@ -85,7 +85,7 @@ export class DevicesService {
 }
 
 /** points: [{raw, liters}] по возрастанию raw; кусочно-линейная интерполяция с ограничением по краям */
-function applyFuelCalibration(attributes: any, calibration?: { sensorKey: string; points: any }) {
+export function applyFuelCalibration(attributes: any, calibration?: { sensorKey: string; points: any }) {
   const points = calibration?.points as Array<{ raw: number; liters: number }> | undefined;
   if (!points || points.length < 2) return attributes;
   const raw = attributes?.[calibration!.sensorKey];

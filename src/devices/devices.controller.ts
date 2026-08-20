@@ -139,6 +139,69 @@ export class DevicesController {
     });
   }
 
+  // лимиты текущего пользователя по его устройствам
+  @Get('device-settings')
+  async deviceSettings(@CurrentUser() user: AuthedUser) {
+    const allowed = await this.devicesService.allowedIds(user);
+    return this.prisma.htDeviceSetting.findMany({
+      where: allowed === null ? {} : { deviceId: { in: allowed } },
+    });
+  }
+
+  @Post('device-settings/:deviceId')
+  async saveDeviceSettings(
+    @CurrentUser() user: AuthedUser,
+    @Param('deviceId', ParseIntPipe) deviceId: number,
+    @Body() dto: { speedLimitKmh?: number | null; minFuelLiters?: number | null },
+  ) {
+    await this.devicesService.assertAllowed(user, [deviceId]);
+    const speedLimitKmh = dto.speedLimitKmh == null || !Number.isFinite(dto.speedLimitKmh) || dto.speedLimitKmh <= 0
+      ? null : dto.speedLimitKmh;
+    const minFuelLiters = dto.minFuelLiters == null || !Number.isFinite(dto.minFuelLiters) || dto.minFuelLiters <= 0
+      ? null : dto.minFuelLiters;
+
+    // лимит скорости уходит в Traccar (атрибут speedLimit в узлах) —
+    // события deviceOverspeed генерит его движок
+    const found = await this.traccar.request('/devices', { params: { id: String(deviceId) } });
+    const device = Array.isArray(found) ? found[0] : null;
+    if (device) {
+      const attributes = { ...(device.attributes ?? {}) };
+      if (speedLimitKmh) attributes.speedLimit = speedLimitKmh / 1.852;
+      else delete attributes.speedLimit;
+      await this.traccar.request(`/devices/${deviceId}`, { method: 'PUT', body: { ...device, attributes } });
+    }
+
+    return this.prisma.htDeviceSetting.upsert({
+      where: { deviceId },
+      update: { speedLimitKmh, minFuelLiters, ...(minFuelLiters == null ? { fuelAlerted: false } : {}) },
+      create: { deviceId, speedLimitKmh, minFuelLiters },
+    });
+  }
+
+  // наши автоматические уведомления (низкое топливо) по устройствам пользователя
+  @Get('alerts')
+  async alerts(
+    @CurrentUser() user: AuthedUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('deviceId') deviceId?: string,
+  ) {
+    const allowed = await this.devicesService.allowedIds(user);
+    const ids = deviceId ? [Number(deviceId)] : allowed;
+    if (deviceId) await this.devicesService.assertAllowed(user, [Number(deviceId)]);
+    return this.prisma.htAlert.findMany({
+      where: {
+        ...(ids === null ? {} : { deviceId: { in: ids } }),
+        createdAt: {
+          gte: from ? new Date(from) : new Date(Date.now() - 7 * 86400000),
+          ...(to ? { lte: new Date(to) } : {}),
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
+
   @Get('admin/fuel-calibrations')
   @Require('devices:manage')
   fuelCalibrations() {

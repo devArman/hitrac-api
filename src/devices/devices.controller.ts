@@ -21,6 +21,34 @@ import { AuthedUser, CurrentUser, Require } from '../auth/decorators';
 const REPORT_TYPES = new Set(['trips', 'route', 'summary', 'events', 'stops']);
 const COMMAND_TYPES = new Set(['positionSingle', 'rebootDevice', 'engineStop', 'engineResume']);
 
+/** поездка через полночь попадает в два суточных окна — склеиваем обратно */
+function mergeSplitTrips(rows: any[]) {
+  const merged: any[] = [];
+  for (const trip of rows) {
+    const prev = merged[merged.length - 1];
+    const gap = prev && prev.deviceId === trip.deviceId
+      ? new Date(trip.startTime).getTime() - new Date(prev.endTime).getTime()
+      : Infinity;
+    if (gap >= 0 && gap <= 2000) {
+      prev.endTime = trip.endTime;
+      prev.endAddress = trip.endAddress ?? prev.endAddress;
+      prev.endLat = trip.endLat ?? prev.endLat;
+      prev.endLon = trip.endLon ?? prev.endLon;
+      prev.endOdometer = trip.endOdometer ?? prev.endOdometer;
+      prev.distance = (prev.distance ?? 0) + (trip.distance ?? 0);
+      prev.duration = (prev.duration ?? 0) + (trip.duration ?? 0);
+      prev.maxSpeed = Math.max(prev.maxSpeed ?? 0, trip.maxSpeed ?? 0);
+      prev.spentFuel = (prev.spentFuel ?? 0) + (trip.spentFuel ?? 0);
+      prev.averageSpeed = prev.duration
+        ? (prev.distance / prev.duration) * 3600000 / 1852
+        : prev.averageSpeed;
+    } else {
+      merged.push({ ...trip });
+    }
+  }
+  return merged;
+}
+
 class SaveMyGroupDto {
   @IsString()
   @MinLength(1)
@@ -191,9 +219,37 @@ export class DevicesController {
     if (!deviceId || !from || !to) throw new BadRequestException('Нужны deviceId, from, to');
     const ids = (Array.isArray(deviceId) ? deviceId : [deviceId]).map(Number);
     await this.devicesService.assertAllowed(user, ids);
+    // поездки и стоянки на периоде длиннее суток Traccar считает «быстрым»
+    // алгоритмом и возвращает пустой список — режем на суточные окна сами
+    if (type === 'trips' || type === 'stops') {
+      return this.chunkedReport(type, ids, new Date(from), new Date(to));
+    }
     return this.traccar.request(`/reports/${type}`, {
       params: { deviceId: ids.map(String), from, to },
     });
+  }
+
+  private async chunkedReport(type: string, ids: number[], from: Date, to: Date) {
+    const DAY = 24 * 3600 * 1000;
+    const windows: Array<[Date, Date]> = [];
+    for (let start = from.getTime(); start < to.getTime(); start += DAY) {
+      windows.push([new Date(start), new Date(Math.min(start + DAY - 1000, to.getTime()))]);
+    }
+    if (windows.length === 0) return [];
+
+    const rows: any[] = [];
+    const CONCURRENCY = 4;
+    for (let i = 0; i < windows.length; i += CONCURRENCY) {
+      // eslint-disable-next-line no-await-in-loop
+      const batch = await Promise.all(windows.slice(i, i + CONCURRENCY).map(([a, b]) =>
+        this.traccar.request(`/reports/${type}`, {
+          params: { deviceId: ids.map(String), from: a.toISOString(), to: b.toISOString() },
+        }).catch(() => [])));
+      batch.forEach((part) => rows.push(...(part ?? [])));
+    }
+
+    rows.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    return type === 'trips' ? mergeSplitTrips(rows) : rows;
   }
 
   // геозоны: общие (owner null) + личные текущего пользователя

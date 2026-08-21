@@ -70,6 +70,27 @@ export class DevicesController {
     return this.devicesService.positions(user);
   }
 
+  // группы для фильтров в кабинетах: у клиента — только группы,
+  // где есть хотя бы одно доступное ему устройство (/groups остаётся админским)
+  @Get('device-groups')
+  async deviceGroups(@CurrentUser() user: AuthedUser) {
+    const allowed = await this.devicesService.allowedIds(user);
+    const allowedSet = allowed === null ? null : new Set(allowed);
+    const groups = await this.prisma.htGroup.findMany({
+      include: { devices: { select: { deviceId: true } } },
+      orderBy: { name: 'asc' },
+    });
+    return groups
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        deviceIds: g.devices
+          .map((d) => d.deviceId)
+          .filter((id) => allowedSet === null || allowedSet.has(id)),
+      }))
+      .filter((g) => g.deviceIds.length > 0);
+  }
+
   // отчёты считает движок Traccar — проксируем под служебным аккаунтом,
   // проверив доступ пользователя к каждому устройству
   @Get('reports/:type')

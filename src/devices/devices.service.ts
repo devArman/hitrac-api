@@ -108,6 +108,89 @@ export class DevicesService {
     }));
   }
 
+  /**
+   * Свой детектор поездок по tc_positions. Отчёт Traccar здесь непригоден:
+   * он опирается на attributes.motion, а Teltonika держит его true от вибрации
+   * работающего двигателя — машина час стоит с заведённым мотором, а поездка
+   * не разрывается. Считаем по скорости: остановка дольше PARKING_SEC (и разрыв
+   * связи дольше GAP_SEC) заканчивает поездку; пробег — хаверсином, как в dayStats.
+   */
+  async trips(deviceId: number, from: Date, to: Date, options: { parkingSec?: number } = {}) {
+    const MOVING_KNOTS = 2; // ~3.7 км/ч
+    const MIN_TRIP_METERS = 100;
+    const GAP_SEC = 600;
+    const parkingSec = options.parkingSec ?? 60;
+
+    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      WITH pts AS (
+        SELECT p.fixtime, p.speed,
+               p.speed > ${MOVING_KNOTS} AS moving,
+               EXTRACT(EPOCH FROM (p.fixtime - LAG(p.fixtime) OVER w)) AS dt,
+               2 * 6371000 * asin(LEAST(1, sqrt(
+                 sin((radians(p.latitude) - radians(LAG(p.latitude) OVER w)) / 2) ^ 2
+                 + cos(radians(LAG(p.latitude) OVER w)) * cos(radians(p.latitude))
+                 * sin((radians(p.longitude) - radians(LAG(p.longitude) OVER w)) / 2) ^ 2
+               ))) AS hop
+        FROM tc_positions p
+        WHERE p.deviceid = ${deviceId} AND p.valid
+          AND p.fixtime >= ${from} AND p.fixtime <= ${to}
+        WINDOW w AS (ORDER BY p.fixtime)
+      ), flags AS (
+        SELECT fixtime, speed, moving, dt,
+               -- dt бывает 0 (бэклог приходит пачкой с одинаковым временем):
+               -- без GREATEST защита от «телепортов» отключалась и пробег раздувался
+               CASE WHEN hop IS NULL OR hop < 15
+                      OR hop / GREATEST(coalesce(dt, 1), 1) > 70 THEN 0 ELSE hop END AS dist,
+               CASE WHEN moving IS DISTINCT FROM LAG(moving) OVER (ORDER BY fixtime)
+                      OR dt > ${GAP_SEC} THEN 1 ELSE 0 END AS newrun
+        FROM pts
+      ), runs0 AS (
+        SELECT *, SUM(newrun) OVER (ORDER BY fixtime) AS run FROM flags
+      ), runs1 AS (
+        SELECT *, FIRST_VALUE(dt) OVER (PARTITION BY run ORDER BY fixtime) AS first_dt FROM runs0
+      ), runs AS (
+        SELECT run, bool_and(moving) AS moving, min(fixtime) AS t0, max(fixtime) AS t1,
+               sum(dist) AS dist, max(speed) AS maxspeed, max(first_dt) AS gap_before
+        FROM runs1 GROUP BY run
+      ), marked AS (
+        SELECT *,
+               (NOT moving AND EXTRACT(EPOCH FROM (t1 - t0)) >= ${parkingSec}) AS is_park,
+               (coalesce(gap_before, 0) > ${GAP_SEC}) AS gapped
+        FROM runs
+      ), numbered AS (
+        SELECT *, SUM(CASE WHEN is_park OR gapped THEN 1 ELSE 0 END) OVER (ORDER BY run) AS trip_no
+        FROM marked
+      )
+      SELECT min(t0) FILTER (WHERE moving) AS starttime,
+             max(t1) FILTER (WHERE moving) AS endtime,
+             sum(dist) AS distance,
+             max(maxspeed) AS maxspeed
+      FROM numbered
+      WHERE NOT is_park
+      GROUP BY trip_no
+      HAVING sum(dist) >= ${MIN_TRIP_METERS}
+         AND count(*) FILTER (WHERE moving) > 0
+      ORDER BY 1`);
+
+    return rows.map((r) => {
+      const startTime = new Date(r.starttime);
+      const endTime = new Date(r.endtime);
+      const duration = endTime.getTime() - startTime.getTime();
+      const distance = Math.round(Number(r.distance ?? 0));
+      return {
+        deviceId,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        distance,
+        duration,
+        maxSpeed: Number(r.maxspeed ?? 0),
+        averageSpeed: duration > 0 ? (distance / duration) * 3600000 / 1852 : 0,
+        startAddress: null,
+        endAddress: null,
+      };
+    });
+  }
+
   async positions(user: AuthedUser) {
     const allowed = await this.allowedIds(user);
     if (allowed !== null && allowed.length === 0) return [];

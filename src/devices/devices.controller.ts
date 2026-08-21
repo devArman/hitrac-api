@@ -219,9 +219,18 @@ export class DevicesController {
     if (!deviceId || !from || !to) throw new BadRequestException('Нужны deviceId, from, to');
     const ids = (Array.isArray(deviceId) ? deviceId : [deviceId]).map(Number);
     await this.devicesService.assertAllowed(user, ids);
-    // поездки и стоянки на периоде длиннее суток Traccar считает «быстрым»
-    // алгоритмом и возвращает пустой список — режем на суточные окна сами
-    if (type === 'trips' || type === 'stops') {
+    // поездки считаем сами из позиций: детектор Traccar верит attributes.motion,
+    // который Teltonika держит true от вибрации двигателя (см. DevicesService.trips)
+    if (type === 'trips') {
+      const perDevice = await Promise.all(
+        ids.map((id) => this.devicesService.trips(id, new Date(from), new Date(to))),
+      );
+      return perDevice.flat().sort(
+        (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+      );
+    }
+    // стоянки на периоде длиннее суток Traccar отдаёт пустыми — режем на суточные окна
+    if (type === 'stops') {
       return this.chunkedReport(type, ids, new Date(from), new Date(to));
     }
     return this.traccar.request(`/reports/${type}`, {

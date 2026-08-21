@@ -54,6 +54,19 @@ model HtUserDevice {
   @@map("ht_user_devices")
 }
 
+// кэш обратного геокодинга: адрес по координате, округлённой до 4 знаков (~11 м).
+// Nominatim ограничивает 1 запрос/с, поэтому всё найденное храним у себя навсегда.
+model HtGeocode {
+  id        Int      @id @default(autoincrement())
+  lat       Float
+  lon       Float
+  address   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([lat, lon])
+  @@map("ht_geocode")
+}
+
 // группа: пачка устройств + пачка пользователей; каждый пользователь группы видит все её устройства.
 // ownerUserId null — админская (общая, клиенты видят), иначе — личная группа клиента
 model HtGroup {

@@ -16,6 +16,7 @@ import { Prisma } from '@prisma/client';
 import { DevicesService } from './devices.service';
 import { TraccarService } from '../traccar/traccar.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { GeocodeService } from './geocode.service';
 import { AuthedUser, CurrentUser, Require } from '../auth/decorators';
 
 const REPORT_TYPES = new Set(['trips', 'route', 'summary', 'events', 'stops']);
@@ -97,6 +98,7 @@ export class DevicesController {
     private readonly devicesService: DevicesService,
     private readonly traccar: TraccarService,
     private readonly prisma: PrismaService,
+    private readonly geocode: GeocodeService,
   ) {}
 
   @Get('devices')
@@ -130,6 +132,27 @@ export class DevicesController {
       only = [id];
     }
     return this.devicesService.dayStats(user, fromDate, toDate, only);
+  }
+
+  // лента дня: чередование поездок и стоянок с адресами (как в Wialon)
+  @Get('device-timeline')
+  async deviceTimeline(
+    @CurrentUser() user: AuthedUser,
+    @Query('deviceId') deviceId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    if (!deviceId || !from || !to) throw new BadRequestException('Нужны deviceId, from, to');
+    const id = Number(deviceId);
+    await this.devicesService.assertAllowed(user, [id]);
+    const segments = await this.devicesService.timeline(id, new Date(from), new Date(to));
+    // адрес нужен там, где машина стояла
+    const parks = segments.filter((s) => s.type === 'park');
+    const addresses = await this.geocode.lookupMany(
+      parks.map((s) => ({ lat: s.startLat, lon: s.startLon })),
+    );
+    parks.forEach((s, i) => { s.address = addresses[i]; });
+    return segments;
   }
 
   // группы для фильтров в кабинетах: админские (общие) + личные группы

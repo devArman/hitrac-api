@@ -117,14 +117,42 @@ export class DevicesService {
    * пробег — хаверсином, как в dayStats.
    */
   async trips(deviceId: number, from: Date, to: Date, options: { parkingSec?: number } = {}) {
+    const segments = await this.timeline(deviceId, from, to, options);
+    return segments
+      .filter((s) => s.type === 'trip')
+      .map((s) => ({
+        deviceId,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        distance: s.distance,
+        duration: s.duration,
+        maxSpeed: s.maxSpeed,
+        averageSpeed: s.averageSpeed,
+        startAddress: null,
+        endAddress: null,
+      }));
+  }
+
+  /**
+   * Лента дня: чередование поездок и стоянок (как в Wialon).
+   * Куски движения между стоянками — поездки; стоянка от parkingSec, разрыв
+   * связи от GAP_SEC тоже заканчивает поездку. Короткие «поездки» (<100 м)
+   * считаем дрожанием GPS и присоединяем к стоянке.
+   */
+  async timeline(
+    deviceId: number,
+    from: Date,
+    to: Date,
+    options: { parkingSec?: number } = {},
+  ): Promise<any[]> {
     const MOVING_KNOTS = 2; // ~3.7 км/ч
     const MIN_TRIP_METERS = 100;
     const GAP_SEC = 600;
     const parkingSec = options.parkingSec ?? 150; // 2.5 минуты
 
-    const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+    const runs = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       WITH pts AS (
-        SELECT p.fixtime, p.speed,
+        SELECT p.fixtime, p.speed, p.latitude, p.longitude,
                p.speed > ${MOVING_KNOTS} AS moving,
                EXTRACT(EPOCH FROM (p.fixtime - LAG(p.fixtime) OVER w)) AS dt,
                2 * 6371000 * asin(LEAST(1, sqrt(
@@ -137,7 +165,7 @@ export class DevicesService {
           AND p.fixtime >= ${from} AND p.fixtime <= ${to}
         WINDOW w AS (ORDER BY p.fixtime)
       ), flags AS (
-        SELECT fixtime, speed, moving, dt,
+        SELECT fixtime, speed, latitude, longitude, moving, dt,
                -- dt бывает 0 (бэклог приходит пачкой с одинаковым временем):
                -- без GREATEST защита от «телепортов» отключалась и пробег раздувался
                CASE WHEN hop IS NULL OR hop < 15
@@ -148,48 +176,92 @@ export class DevicesService {
       ), runs0 AS (
         SELECT *, SUM(newrun) OVER (ORDER BY fixtime) AS run FROM flags
       ), runs1 AS (
-        SELECT *, FIRST_VALUE(dt) OVER (PARTITION BY run ORDER BY fixtime) AS first_dt FROM runs0
-      ), runs AS (
-        SELECT run, bool_and(moving) AS moving, min(fixtime) AS t0, max(fixtime) AS t1,
-               sum(dist) AS dist, max(speed) AS maxspeed, max(first_dt) AS gap_before
-        FROM runs1 GROUP BY run
-      ), marked AS (
         SELECT *,
-               (NOT moving AND EXTRACT(EPOCH FROM (t1 - t0)) >= ${parkingSec}) AS is_park,
-               (coalesce(gap_before, 0) > ${GAP_SEC}) AS gapped
-        FROM runs
-      ), numbered AS (
-        SELECT *, SUM(CASE WHEN is_park OR gapped THEN 1 ELSE 0 END) OVER (ORDER BY run) AS trip_no
-        FROM marked
+               FIRST_VALUE(dt) OVER (PARTITION BY run ORDER BY fixtime) AS first_dt,
+               FIRST_VALUE(latitude) OVER (PARTITION BY run ORDER BY fixtime) AS lat0,
+               FIRST_VALUE(longitude) OVER (PARTITION BY run ORDER BY fixtime) AS lon0,
+               LAST_VALUE(latitude) OVER (PARTITION BY run ORDER BY fixtime
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS lat1,
+               LAST_VALUE(longitude) OVER (PARTITION BY run ORDER BY fixtime
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS lon1
+        FROM runs0
       )
-      SELECT min(t0) FILTER (WHERE moving) AS starttime,
-             max(t1) FILTER (WHERE moving) AS endtime,
-             sum(dist) AS distance,
-             max(maxspeed) AS maxspeed
-      FROM numbered
-      WHERE NOT is_park
-      GROUP BY trip_no
-      HAVING sum(dist) >= ${MIN_TRIP_METERS}
-         AND count(*) FILTER (WHERE moving) > 0
-      ORDER BY 1`);
+      SELECT run, bool_and(moving) AS moving, min(fixtime) AS t0, max(fixtime) AS t1,
+             sum(dist) AS dist, max(speed) AS maxspeed, max(first_dt) AS gap_before,
+             max(lat0) AS lat0, max(lon0) AS lon0, max(lat1) AS lat1, max(lon1) AS lon1
+      FROM runs1 GROUP BY run ORDER BY min(fixtime)`);
 
-    return rows.map((r) => {
-      const startTime = new Date(r.starttime);
-      const endTime = new Date(r.endtime);
-      const duration = endTime.getTime() - startTime.getTime();
-      const distance = Math.round(Number(r.distance ?? 0));
-      return {
-        deviceId,
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        distance,
-        duration,
-        maxSpeed: Number(r.maxspeed ?? 0),
-        averageSpeed: duration > 0 ? (distance / duration) * 3600000 / 1852 : 0,
-        startAddress: null,
-        endAddress: null,
-      };
-    });
+    // склеиваем пробеги в поездки и стоянки
+    const segments: any[] = [];
+    let current: any = null;
+    const flush = () => {
+      if (!current) return;
+      if (current.type === 'trip' && current.distance < MIN_TRIP_METERS) {
+        // не поездка, а дрожание GPS — приклеиваем ко времени стоянки
+        const prev = segments[segments.length - 1];
+        if (prev?.type === 'park') {
+          prev.endTime = current.endTime;
+          prev.duration = new Date(prev.endTime).getTime() - new Date(prev.startTime).getTime();
+          current = null;
+          return;
+        }
+        current.type = 'park';
+        current.distance = 0;
+      }
+      const prev = segments[segments.length - 1];
+      if (prev && prev.type === current.type) {
+        prev.endTime = current.endTime;
+        prev.duration = new Date(prev.endTime).getTime() - new Date(prev.startTime).getTime();
+        prev.distance = (prev.distance ?? 0) + (current.distance ?? 0);
+        prev.maxSpeed = Math.max(prev.maxSpeed ?? 0, current.maxSpeed ?? 0);
+        prev.endLat = current.endLat;
+        prev.endLon = current.endLon;
+      } else {
+        segments.push(current);
+      }
+      current = null;
+    };
+
+    for (const run of runs) {
+      const t0 = new Date(run.t0);
+      const t1 = new Date(run.t1);
+      const durationSec = (t1.getTime() - t0.getTime()) / 1000;
+      const moving = Boolean(run.moving);
+      const isPark = !moving && durationSec >= parkingSec;
+      const gapped = Number(run.gap_before ?? 0) > GAP_SEC;
+      const type = isPark ? 'park' : 'trip';
+
+      if (current && (current.type !== type || gapped)) flush();
+      if (!current) {
+        current = {
+          type,
+          startTime: t0.toISOString(),
+          endTime: t1.toISOString(),
+          duration: t1.getTime() - t0.getTime(),
+          distance: Math.round(Number(run.dist ?? 0)),
+          maxSpeed: Number(run.maxspeed ?? 0),
+          startLat: Number(run.lat0),
+          startLon: Number(run.lon0),
+          endLat: Number(run.lat1),
+          endLon: Number(run.lon1),
+        };
+      } else {
+        current.endTime = t1.toISOString();
+        current.duration = t1.getTime() - new Date(current.startTime).getTime();
+        current.distance += Math.round(Number(run.dist ?? 0));
+        current.maxSpeed = Math.max(current.maxSpeed, Number(run.maxspeed ?? 0));
+        current.endLat = Number(run.lat1);
+        current.endLon = Number(run.lon1);
+      }
+    }
+    flush();
+
+    return segments.map((s) => ({
+      ...s,
+      averageSpeed: s.type === 'trip' && s.duration > 0
+        ? (s.distance / s.duration) * 3600000 / 1852
+        : 0,
+    }));
   }
 
   async positions(user: AuthedUser) {

@@ -55,6 +55,58 @@ export class DevicesService {
     }));
   }
 
+  /**
+   * Суточная статистика для списков устройств: пробег и макс. скорость из
+   * tc_positions (пробег — по totalDistance, fallback — сумма distance),
+   * число превышений скорости из tc_events. from — начало дня клиента.
+   */
+  async dayStats(user: AuthedUser, from: Date) {
+    const allowed = await this.allowedIds(user);
+    if (allowed !== null && allowed.length === 0) return [];
+    const wherePos = allowed === null ? Prisma.empty : Prisma.sql`AND p.deviceid IN (${Prisma.join(allowed)})`;
+    const whereEv = allowed === null ? Prisma.empty : Prisma.sql`AND e.deviceid IN (${Prisma.join(allowed)})`;
+    const [pos, events] = await Promise.all([
+      // пробег считаем сами хаверсином по fixtime: attributes.distance у Traccar
+      // идёт по порядку ПРИХОДА пакетов и рвётся, когда трекер заливает бэклог
+      // вперемешку с live. Отсечки: <15 м — GPS-дрейф стоянки, >70 м/с (~250 км/ч)
+      // между фиксами — нефизичный скачок
+      this.prisma.$queryRaw<any[]>(Prisma.sql`
+        WITH pts AS (
+          SELECT p.deviceid, p.fixtime, p.speed,
+                 radians(p.latitude) AS lat, radians(p.longitude) AS lon,
+                 LAG(radians(p.latitude)) OVER w AS plat,
+                 LAG(radians(p.longitude)) OVER w AS plon,
+                 LAG(p.fixtime) OVER w AS ptime
+          FROM tc_positions p
+          WHERE p.fixtime >= ${from} AND p.valid ${wherePos}
+          WINDOW w AS (PARTITION BY p.deviceid ORDER BY p.fixtime)
+        ), hops AS (
+          SELECT deviceid, speed,
+                 2 * 6371000 * asin(LEAST(1, sqrt(
+                   sin((lat - plat) / 2) ^ 2 +
+                   cos(plat) * cos(lat) * sin((lon - plon) / 2) ^ 2
+                 ))) AS dist,
+                 GREATEST(EXTRACT(EPOCH FROM (fixtime - ptime)), 1) AS dt
+          FROM pts
+        )
+        SELECT deviceid, MAX(speed) AS maxspeed,
+               SUM(dist) FILTER (WHERE dist >= 15 AND dist / dt <= 70) AS dist
+        FROM hops GROUP BY deviceid`),
+      this.prisma.$queryRaw<any[]>(Prisma.sql`
+        SELECT e.deviceid, COUNT(*)::int AS overspeed
+        FROM tc_events e
+        WHERE e.type = 'deviceOverspeed' AND e.eventtime >= ${from} ${whereEv}
+        GROUP BY e.deviceid`),
+    ]);
+    const overspeedBy = new Map(events.map((r) => [r.deviceid, r.overspeed]));
+    return pos.map((r) => ({
+      deviceId: r.deviceid,
+      distanceMeters: Math.round(r.dist ?? 0),
+      maxSpeedKnots: r.maxspeed ?? 0,
+      overspeedCount: overspeedBy.get(r.deviceid) ?? 0,
+    }));
+  }
+
   async positions(user: AuthedUser) {
     const allowed = await this.allowedIds(user);
     if (allowed !== null && allowed.length === 0) return [];

@@ -70,6 +70,14 @@ export class DevicesController {
     return this.devicesService.positions(user);
   }
 
+  // суточная статистика (пробег, макс. скорость, превышения) для списков
+  @Get('device-stats')
+  deviceStats(@CurrentUser() user: AuthedUser, @Query('from') from?: string) {
+    const date = from ? new Date(from) : new Date(new Date().setHours(0, 0, 0, 0));
+    if (Number.isNaN(date.getTime())) throw new BadRequestException('Неверный параметр from');
+    return this.devicesService.dayStats(user, date);
+  }
+
   // группы для фильтров в кабинетах: у клиента — только группы,
   // где есть хотя бы одно доступное ему устройство (/groups остаётся админским)
   @Get('device-groups')

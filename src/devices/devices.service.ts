@@ -112,14 +112,15 @@ export class DevicesService {
    * Свой детектор поездок по tc_positions. Отчёт Traccar здесь непригоден:
    * он опирается на attributes.motion, а Teltonika держит его true от вибрации
    * работающего двигателя — машина час стоит с заведённым мотором, а поездка
-   * не разрывается. Считаем по скорости: остановка дольше PARKING_SEC (и разрыв
-   * связи дольше GAP_SEC) заканчивает поездку; пробег — хаверсином, как в dayStats.
+   * не разрывается. Считаем по скорости: остановка дольше parkingSec (2.5 мин,
+   * как в Wialon у клиента) и разрыв связи дольше GAP_SEC заканчивают поездку;
+   * пробег — хаверсином, как в dayStats.
    */
   async trips(deviceId: number, from: Date, to: Date, options: { parkingSec?: number } = {}) {
     const MOVING_KNOTS = 2; // ~3.7 км/ч
     const MIN_TRIP_METERS = 100;
     const GAP_SEC = 600;
-    const parkingSec = options.parkingSec ?? 60;
+    const parkingSec = options.parkingSec ?? 150; // 2.5 минуты
 
     const rows = await this.prisma.$queryRaw<any[]>(Prisma.sql`
       WITH pts AS (

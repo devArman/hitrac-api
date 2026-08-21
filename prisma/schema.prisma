@@ -54,11 +54,13 @@ model HtUserDevice {
   @@map("ht_user_devices")
 }
 
-// группа: пачка устройств + пачка пользователей; каждый пользователь группы видит все её устройства
+// группа: пачка устройств + пачка пользователей; каждый пользователь группы видит все её устройства.
+// ownerUserId null — админская (общая, клиенты видят), иначе — личная группа клиента
 model HtGroup {
   id          Int             @id @default(autoincrement())
-  name        String          @unique
+  name        String
   description String?
+  ownerUserId Int?            @map("owner_user_id")
   devices       HtGroupDevice[]
   users         HtGroupUser[]
   announcements HtAnnouncementGroup[]

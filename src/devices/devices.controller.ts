@@ -11,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
 import { Prisma } from '@prisma/client';
 import { DevicesService } from './devices.service';
 import { TraccarService } from '../traccar/traccar.service';
@@ -20,6 +20,17 @@ import { AuthedUser, CurrentUser, Require } from '../auth/decorators';
 
 const REPORT_TYPES = new Set(['trips', 'route', 'summary', 'events', 'stops']);
 const COMMAND_TYPES = new Set(['positionSingle', 'rebootDevice', 'engineStop', 'engineResume']);
+
+class SaveMyGroupDto {
+  @IsString()
+  @MinLength(1)
+  name: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  deviceIds?: number[];
+}
 
 class SendCommandDto {
   @IsInt()
@@ -93,13 +104,14 @@ export class DevicesController {
     return this.devicesService.dayStats(user, fromDate, toDate, only);
   }
 
-  // группы для фильтров в кабинетах: у клиента — только группы,
-  // где есть хотя бы одно доступное ему устройство (/groups остаётся админским)
+  // группы для фильтров в кабинетах: админские (общие) + личные группы
+  // пользователя; из админских видны только устройства, доступные пользователю
   @Get('device-groups')
   async deviceGroups(@CurrentUser() user: AuthedUser) {
     const allowed = await this.devicesService.allowedIds(user);
     const allowedSet = allowed === null ? null : new Set(allowed);
     const groups = await this.prisma.htGroup.findMany({
+      where: { OR: [{ ownerUserId: null }, { ownerUserId: user.id }] },
       include: { devices: { select: { deviceId: true } } },
       orderBy: { name: 'asc' },
     });
@@ -107,11 +119,62 @@ export class DevicesController {
       .map((g) => ({
         id: g.id,
         name: g.name,
+        own: g.ownerUserId === user.id,
         deviceIds: g.devices
           .map((d) => d.deviceId)
           .filter((id) => allowedSet === null || allowedSet.has(id)),
       }))
-      .filter((g) => g.deviceIds.length > 0);
+      .filter((g) => g.own || g.deviceIds.length > 0);
+  }
+
+  // личные группы клиента: создание/правка/удаление только своих,
+  // устройства — только из доступных пользователю
+  @Post('device-groups')
+  async createMyGroup(@CurrentUser() user: AuthedUser, @Body() dto: SaveMyGroupDto) {
+    const deviceIds = [...new Set(dto.deviceIds ?? [])];
+    if (deviceIds.length) await this.devicesService.assertAllowed(user, deviceIds);
+    const group = await this.prisma.htGroup.create({
+      data: {
+        name: dto.name.trim(),
+        ownerUserId: user.id,
+        devices: { create: deviceIds.map((deviceId) => ({ deviceId })) },
+      },
+      include: { devices: { select: { deviceId: true } } },
+    });
+    return { id: group.id, name: group.name, own: true, deviceIds: group.devices.map((d) => d.deviceId) };
+  }
+
+  @Patch('device-groups/:id')
+  async updateMyGroup(
+    @CurrentUser() user: AuthedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SaveMyGroupDto,
+  ) {
+    const found = await this.prisma.htGroup.findUnique({ where: { id } });
+    if (!found || found.ownerUserId !== user.id) {
+      throw new BadRequestException('Можно менять только свои группы');
+    }
+    const deviceIds = [...new Set(dto.deviceIds ?? [])];
+    if (deviceIds.length) await this.devicesService.assertAllowed(user, deviceIds);
+    const group = await this.prisma.htGroup.update({
+      where: { id },
+      data: {
+        name: dto.name.trim(),
+        devices: { deleteMany: {}, create: deviceIds.map((deviceId) => ({ deviceId })) },
+      },
+      include: { devices: { select: { deviceId: true } } },
+    });
+    return { id: group.id, name: group.name, own: true, deviceIds: group.devices.map((d) => d.deviceId) };
+  }
+
+  @Delete('device-groups/:id')
+  async deleteMyGroup(@CurrentUser() user: AuthedUser, @Param('id', ParseIntPipe) id: number) {
+    const found = await this.prisma.htGroup.findUnique({ where: { id } });
+    if (!found || found.ownerUserId !== user.id) {
+      throw new BadRequestException('Можно удалять только свои группы');
+    }
+    await this.prisma.htGroup.delete({ where: { id } });
+    return { deleted: true };
   }
 
   // отчёты считает движок Traccar — проксируем под служебным аккаунтом,

@@ -70,12 +70,27 @@ export class DevicesController {
     return this.devicesService.positions(user);
   }
 
-  // суточная статистика (пробег, макс. скорость, превышения) для списков
+  // статистика за период (пробег, макс. скорость, превышения):
+  // по умолчанию с начала суток по всем устройствам; deviceId — по одному
   @Get('device-stats')
-  deviceStats(@CurrentUser() user: AuthedUser, @Query('from') from?: string) {
-    const date = from ? new Date(from) : new Date(new Date().setHours(0, 0, 0, 0));
-    if (Number.isNaN(date.getTime())) throw new BadRequestException('Неверный параметр from');
-    return this.devicesService.dayStats(user, date);
+  async deviceStats(
+    @CurrentUser() user: AuthedUser,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('deviceId') deviceId?: string,
+  ) {
+    const fromDate = from ? new Date(from) : new Date(new Date().setHours(0, 0, 0, 0));
+    const toDate = to ? new Date(to) : new Date();
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('Неверный параметр from/to');
+    }
+    let only: number[] | null = null;
+    if (deviceId) {
+      const id = Number(deviceId);
+      await this.devicesService.assertAllowed(user, [id]);
+      only = [id];
+    }
+    return this.devicesService.dayStats(user, fromDate, toDate, only);
   }
 
   // группы для фильтров в кабинетах: у клиента — только группы,

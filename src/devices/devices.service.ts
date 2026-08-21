@@ -60,8 +60,9 @@ export class DevicesService {
    * tc_positions (пробег — по totalDistance, fallback — сумма distance),
    * число превышений скорости из tc_events. from — начало дня клиента.
    */
-  async dayStats(user: AuthedUser, from: Date) {
-    const allowed = await this.allowedIds(user);
+  async dayStats(user: AuthedUser, from: Date, to: Date = new Date(), only: number[] | null = null) {
+    // only — конкретные устройства; доступ к ним проверяет контроллер
+    const allowed = only ?? await this.allowedIds(user);
     if (allowed !== null && allowed.length === 0) return [];
     const wherePos = allowed === null ? Prisma.empty : Prisma.sql`AND p.deviceid IN (${Prisma.join(allowed)})`;
     const whereEv = allowed === null ? Prisma.empty : Prisma.sql`AND e.deviceid IN (${Prisma.join(allowed)})`;
@@ -78,7 +79,7 @@ export class DevicesService {
                  LAG(radians(p.longitude)) OVER w AS plon,
                  LAG(p.fixtime) OVER w AS ptime
           FROM tc_positions p
-          WHERE p.fixtime >= ${from} AND p.valid ${wherePos}
+          WHERE p.fixtime >= ${from} AND p.fixtime <= ${to} AND p.valid ${wherePos}
           WINDOW w AS (PARTITION BY p.deviceid ORDER BY p.fixtime)
         ), hops AS (
           SELECT deviceid, speed,
@@ -95,7 +96,7 @@ export class DevicesService {
       this.prisma.$queryRaw<any[]>(Prisma.sql`
         SELECT e.deviceid, COUNT(*)::int AS overspeed
         FROM tc_events e
-        WHERE e.type = 'deviceOverspeed' AND e.eventtime >= ${from} ${whereEv}
+        WHERE e.type = 'deviceOverspeed' AND e.eventtime >= ${from} AND e.eventtime <= ${to} ${whereEv}
         GROUP BY e.deviceid`),
     ]);
     const overspeedBy = new Map(events.map((r) => [r.deviceid, r.overspeed]));

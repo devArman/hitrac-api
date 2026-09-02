@@ -29,6 +29,8 @@ model HtUser {
   name         String
   phone        String?
   prefs        Json?
+  // цена одного трекера в месяц (драмы) для этого клиента; null — базовый тариф
+  monthlyPrice Int?           @map("monthly_price")
   passwordHash String         @map("password_hash")
   disabled     Boolean        @default(false)
   roleId       Int?           @map("role_id")

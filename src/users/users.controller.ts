@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
-import { IsArray, IsBoolean, IsEmail, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsInt, IsOptional, IsString, Min, MinLength, ValidateIf } from 'class-validator';
 import { Require } from '../auth/decorators';
 import { UsersService } from './users.service';
 
@@ -30,6 +30,14 @@ class CreateUserDto {
   @IsOptional()
   @IsBoolean()
   disabled?: boolean;
+
+
+  // null — снять индивидуальную цену и вернуть клиента на базовый тариф
+  @IsOptional()
+  @ValidateIf((o) => o.monthlyPrice !== null)
+  @IsInt()
+  @Min(0)
+  monthlyPrice?: number | null;
 
   @IsOptional()
   @IsArray()
@@ -67,6 +75,14 @@ class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   disabled?: boolean;
+
+
+  // null — снять индивидуальную цену и вернуть клиента на базовый тариф
+  @IsOptional()
+  @ValidateIf((o) => o.monthlyPrice !== null)
+  @IsInt()
+  @Min(0)
+  monthlyPrice?: number | null;
 
   @IsOptional()
   @IsArray()

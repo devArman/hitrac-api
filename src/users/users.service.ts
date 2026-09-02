@@ -8,6 +8,7 @@ const PUBLIC_SELECT = {
   name: true,
   phone: true,
   disabled: true,
+  monthlyPrice: true,
   roleId: true,
   role: true,
   devices: { select: { deviceId: true } },
@@ -23,6 +24,7 @@ export interface UserInput {
   roleId?: number | null;
   roleName?: string;
   disabled?: boolean;
+  monthlyPrice?: number | null;
   deviceIds?: number[];
 }
 
@@ -60,6 +62,7 @@ export class UsersService {
         passwordHash: await bcrypt.hash(input.password, 10),
         roleId: roleId ?? null,
         disabled: input.disabled ?? false,
+        monthlyPrice: input.monthlyPrice ?? null,
         devices: { create: (input.deviceIds ?? []).map((deviceId) => ({ deviceId })) },
       },
       select: PUBLIC_SELECT,
@@ -81,6 +84,7 @@ export class UsersService {
         ...(input.password !== undefined && { passwordHash: await bcrypt.hash(input.password, 10) }),
         ...(roleId !== undefined && { roleId }),
         ...(input.disabled !== undefined && { disabled: input.disabled }),
+        ...(input.monthlyPrice !== undefined && { monthlyPrice: input.monthlyPrice }),
         ...(input.deviceIds !== undefined && {
           devices: {
             deleteMany: {},

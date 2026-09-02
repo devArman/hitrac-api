@@ -386,6 +386,24 @@ export class DevicesController {
   }
 
   // создание трекера (админка): в Traccar + привязка в нашей карте прав
+  // дата, с которой трекер работает: его первый пакет.
+  // Отдельным админским эндпоинтом, а не в /devices — этот список клиенты тянут каждые 30 с,
+  // и лишний проход по tc_positions им ни к чему.
+  @Get('admin/device-first-seen')
+  @Require('devices:manage')
+  deviceFirstSeen() {
+    // fixtime проиндексирован парой (deviceid, fixtime), поэтому MIN по устройству дешёвый;
+    // мусорные 1970-е, которые шлют некоторые прошивки до первого фикса, отсекаем
+    return this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT d.id AS "deviceId", f.t AS "firstSeen"
+      FROM tc_devices d
+      LEFT JOIN LATERAL (
+        SELECT MIN(p.fixtime) AS t
+        FROM tc_positions p
+        WHERE p.deviceid = d.id AND p.fixtime > TIMESTAMP '2000-01-01'
+      ) f ON TRUE`);
+  }
+
   @Post('admin/devices')
   @Require('devices:manage')
   async createDevice(@Body() dto: CreateDeviceDto) {

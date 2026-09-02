@@ -20,6 +20,16 @@ import { GeocodeService } from './geocode.service';
 import { AuthedUser, CurrentUser, Require } from '../auth/decorators';
 
 const REPORT_TYPES = new Set(['trips', 'route', 'summary', 'events', 'stops']);
+
+// позиция годится для трека: валидный фикс с координатами в допустимых пределах и не 0/0
+function isDrawablePosition(p: any): boolean {
+  const lat = Number(p?.latitude);
+  const lon = Number(p?.longitude);
+  if (p?.valid === false) return false;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return false;
+  return !(lat === 0 && lon === 0);
+}
 const COMMAND_TYPES = new Set(['positionSingle', 'rebootDevice', 'engineStop', 'engineResume']);
 
 /** поездка через полночь попадает в два суточных окна — склеиваем обратно */
@@ -256,9 +266,12 @@ export class DevicesController {
     if (type === 'stops') {
       return this.chunkedReport(type, ids, new Date(from), new Date(to));
     }
-    return this.traccar.request(`/reports/${type}`, {
+    const rows = await this.traccar.request(`/reports/${type}`, {
       params: { deviceId: ids.map(String), from, to },
     });
+    // трек: Traccar отдаёт и невалидные фиксы (valid=false, координаты 0/0) —
+    // на карте они рисуются прямой через полмира к «нулевому острову» в Гвинейском заливе
+    return type === 'route' && Array.isArray(rows) ? rows.filter(isDrawablePosition) : rows;
   }
 
   private async chunkedReport(type: string, ids: number[], from: Date, to: Date) {

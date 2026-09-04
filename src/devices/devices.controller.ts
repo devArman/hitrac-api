@@ -156,12 +156,14 @@ export class DevicesController {
     const id = Number(deviceId);
     await this.devicesService.assertAllowed(user, [id]);
     const segments = await this.devicesService.timeline(id, new Date(from), new Date(to));
-    // адрес нужен там, где машина стояла
+    // адрес нужен там, где машина стояла — но ответ Nominatim не ждём:
+    // отдаём из кэша (промахи null), промахи греются фоном, клиент тихо
+    // перезапросит ленту и дополнит адреса
     const parks = segments.filter((s) => s.type === 'park');
-    const addresses = await this.geocode.lookupMany(
-      parks.map((s) => ({ lat: s.startLat, lon: s.startLon })),
-    );
+    const points = parks.map((s) => ({ lat: s.startLat, lon: s.startLon }));
+    const addresses = await this.geocode.lookupCachedMany(points);
     parks.forEach((s, i) => { s.address = addresses[i]; });
+    this.geocode.warmup(points.filter((_, i) => !addresses[i]));
     return segments;
   }
 
